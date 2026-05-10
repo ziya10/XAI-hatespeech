@@ -12,38 +12,38 @@ import plotly.express as px
 import pandas as pd
 
 # --- 1. AYARLAR ---
-st.set_page_config(page_title="XAI-Hate Detection (Plotly)", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="XAI-Hate Detection ", page_icon="🛡️", layout="wide")
+
 MODEL_PATH = "models/" 
-OPTIMAL_THRESHOLD = 0.50 
+OPTIMAL_THRESHOLD = 0.44 
 
 @st.cache_resource
 def load_assets():
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
-    # SHAP analizi için pipeline
-    pred_pipeline = pipeline("text-classification", model=model, tokenizer=tokenizer, return_all_scores=True)
+    pred_pipeline = pipeline(
+        "text-classification", 
+        model=model, 
+        tokenizer=tokenizer, 
+        return_all_scores=True
+    )
     return tokenizer, model, pred_pipeline
 
 tokenizer, model, pred_pipeline = load_assets()
 
 # --- 2. PLOTLY & SHAP ANALİZ FONKSİYONU ---
 def plot_shap_with_plotly(text):
-    # SHAP değerlerini hesapla
     explainer = shap.Explainer(pred_pipeline)
     shap_values = explainer([text])
     
-    # Kelimeleri ve etki skorlarını (Nefret sınıfı için - index 0) çek
+    # Modelde Index 0 = Toxic olduğu için 0'ı hedefliyoruz
     tokens = shap_values[0].data
-    values = shap_values[0].values[:, 0]
+    values = shap_values[0].values[:, 0] 
 
-    # Veriyi tabloya dök
     df = pd.DataFrame({"Kelime": tokens, "Etki Skoru": values})
-    
-    # Görselleştirme için sırala
     df = df.sort_values(by="Etki Skoru", ascending=True)
 
-    # Renklendirme kuralı
-    df["Yön"] = df["Etki Skoru"].apply(lambda x: "🚨 Nefret Artıran" if x > 0 else "✅ Normalleştiren")
+    df["Yön"] = df["Etki Skoru"].apply(lambda x: "🚨 Toxic Artıran" if x > 0 else "✅ Normalleştiren")
 
     fig = px.bar(
         df, 
@@ -51,9 +51,9 @@ def plot_shap_with_plotly(text):
         y="Kelime", 
         orientation="h",
         color="Yön",
-        color_discrete_map={"🚨 Nefret Artıran": "#ef553b", "✅ Normalleştiren": "#636efa"},
+        color_discrete_map={"🚨 Toxic Artıran": "#ef553b", "✅ Normalleştiren": "#636efa"},
         labels={"Etki Skoru": "Karara Etkisi (SHAP Value)", "Kelime": ""},
-        title="Kelimelerin Karar Üzerindeki Etkisi"
+        title="Kelimelerin Karar Üzerindeki Etkisi (Toxic Sınıfı Analizi)"
     )
     
     fig.update_layout(
@@ -65,7 +65,7 @@ def plot_shap_with_plotly(text):
 
 # --- 3. ARAYÜZ ---
 st.title("🛡️ XAI-Hate: Explainable Hate Speech Detection")
-st.markdown(f"**Model:** DistilBERT | **Eşik Değeri:** {OPTIMAL_THRESHOLD}")
+st.markdown(f"**Model:** DistilBERT | **Hassasiyet Eşiği:** {OPTIMAL_THRESHOLD}")
 
 user_input = st.text_area("Analiz edilecek metni girin:", height=100, placeholder="Analiz edilecek cümleyi buraya yazın...")
 
@@ -78,22 +78,27 @@ if st.button("Analiz Et ve Görselleştir"):
         with torch.no_grad():
             outputs = model(**inputs)
             probs = F.softmax(outputs.logits, dim=-1)
-            toxic_prob = probs[0][0].item()
+            
+            # Index 0 = Toxic sınıfı
+            toxic_prob = probs[0][0].item() 
 
         # Sonuç Paneli
         col_res, col_space = st.columns([1, 1])
         with col_res:
             st.subheader("📊 Tahmin Sonucu")
             if toxic_prob >= OPTIMAL_THRESHOLD:
-                st.error(f"### 🚨 NEFRET SÖYLEMİ (%{toxic_prob*100:.2f})")
+                st.error(f"### 🚨 TOXIC (%{toxic_prob*100:.2f})")
+                st.write("Bu metin topluluk kurallarını ihlal ediyor olabilir.")
             else:
-                st.success(f"### ✅ NORMAL (%{toxic_prob*100:.2f})")
+                # Normal olasılığını doğru hesapla
+                st.success(f"### ✅ NORMAL (%{(1 - toxic_prob)*100:.2f})")
+                st.write("Metin güvenli görünüyor.")
 
         st.divider()
 
         # --- XAI GÖRSELLEŞTİRME ---
-        st.subheader("🔍 Kelime Bazlı Karar Analizi")
-        st.write("Sıfır çizgisinin **sağındaki (kırmızı)** çubuklar nefret olasılığını artırır, **solundaki (mavi)** çubuklar azaltır.")
+        st.subheader("🔍 Kelime Bazlı Karar Analizi (SHAP)")
+        st.write("Modelin neden bu kararı verdiğini görün:")
         
         with st.spinner("Plotly grafiği hazırlanıyor..."):
             try:
